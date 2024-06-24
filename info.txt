@@ -1,0 +1,25 @@
+new_soc:
+
+Posição 0: Representa o novo estado de carga (SoC) da bateria após a execução da ação.
+pv_power:
+
+Posição 1: Representa a potência instantânea do sistema fotovoltaico (PV).
+load_power:
+
+Posição 2: Representa a potência instantânea da carga.
+grid_power:
+
+Posição 3: Representa a potência da rede, que pode ser positiva (exportação) ou negativa (importação).
+pv_power * (1 - pv_shedding):
+
+Posição 4: Representa a potência PV total após o corte.
+load_power:
+
+Posição 5: Representa a potência da carga instantânea.
+load_power * load_shedding:
+
+Posição 6: Representa o corte de carga (load shedding).
+grid_cost + load_shedding_cost:
+
+Posição 7: Representa o custo total com base no time_step.
+
