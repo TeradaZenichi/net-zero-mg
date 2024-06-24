@@ -2,13 +2,15 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from env import NetZeroMicrogridEnv
-from model import DeepMLP
+from mlp import DeepMLP
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+import json
+import os
 
 # Função para ler os arquivos CSV e alinhar os timestamps
-def load_data(pv_file, load_file, T):
+def load_data(pv_file, load_file, T, time_step_minutes):
     # Carregar dados de geração PV
     pv_data = pd.read_csv(pv_file, sep=';', parse_dates=['datetime'], index_col='datetime')
     
@@ -19,9 +21,15 @@ def load_data(pv_file, load_file, T):
     if not pv_data.index.equals(load_data.index):
         raise ValueError("Os timestamps dos arquivos PV e Load não estão alinhados.")
     
+    # Calcular o número de intervalos no timestep dado em T meses
+    num_intervals_per_hour = 60 // time_step_minutes
+    num_intervals_per_day = 24 * num_intervals_per_hour
+    num_intervals_per_month = 30 * num_intervals_per_day
+    num_intervals = T * num_intervals_per_month
+
     # Selecionar os primeiros T meses de dados
-    pv_data = pv_data.head(T * 30 * 24 * 60 // 5)
-    load_data = load_data.head(T * 30 * 24 * 60 // 5)
+    pv_data = pv_data.head(num_intervals)
+    load_data = load_data.head(num_intervals)
     
     return pv_data['power'], load_data['Global_active_power']
 
@@ -33,19 +41,29 @@ def get_previous_samples(series, step, N):
         return series.iloc[step-N:step].values
 
 if __name__ == "__main__":
+    # Carregar parâmetros do arquivo config.json
+    with open('config.json', 'r') as f:
+        config = json.load(f)
+
+    # Salvar os parâmetros em um arquivo temporário
+    temp_config_path = 'temp_config.json'
+    with open(temp_config_path, 'w') as f:
+        json.dump(config, f)
+
     # Caminhos dos arquivos CSV
     pv_file = 'data/df_unicamp_5min.csv'
     load_file = 'data/household_power_consumption_5min.csv'
-    T = 6  # Número de meses de dados a serem usados
-
-    # Carregar dados
-    pv_series, load_series = load_data(pv_file, load_file, T)
+    T = config["T"]  # Número de meses de dados a serem usados
 
     # Inicializar o ambiente
-    env = NetZeroMicrogridEnv()
+    env = NetZeroMicrogridEnv(temp_config_path)
+    time_step_minutes = config["time_step"]  # Obter o timestep do ambiente
+
+    # Carregar dados
+    pv_series, load_series = load_data(pv_file, load_file, T, time_step_minutes)
 
     # Definir o modelo MLP
-    N = 5  # Número de amostras anteriores de carga e PV
+    N = config["N"]  # Número de amostras anteriores de carga e PV
     input_size = 2 * N + 1  # 2*N para carga e PV, 1 para SoC atual
     hidden_sizes = [128, 64]  # Tamanho das camadas ocultas
     output_size = 3  # Saídas: bess_power, pv_shedding, load_shedding
@@ -54,7 +72,7 @@ if __name__ == "__main__":
     optimizer = optim.Adam(model.parameters(), lr=0.001)
     criterion = nn.MSELoss()
 
-    num_episodes = 1000
+    num_episodes = 10000
     gamma = 0.99
 
     print("Iniciando o treinamento...")
@@ -64,8 +82,9 @@ if __name__ == "__main__":
         done = False
         total_reward = 0
         step = N  # Garantir que haja dados suficientes para amostras anteriores
+        max_steps = len(pv_series)  # Número máximo de passos baseado na quantidade de dados carregados
 
-        while not done and step < len(pv_series):
+        while not done and step < max_steps:
             # Obter os valores de PV e Load a partir das séries temporais
             pv_power_normalized = pv_series.iloc[step]
             load_power_normalized = load_series.iloc[step]
@@ -85,6 +104,14 @@ if __name__ == "__main__":
             # Obter a ação do modelo
             model_output = model(model_input)
             bess_power, pv_shedding, load_shedding = model_output[0].detach().numpy()
+
+            # Verificação para NaN
+            if np.isnan(bess_power):
+                bess_power = 0.0
+            if np.isnan(pv_shedding):
+                pv_shedding = 0.0
+            if np.isnan(load_shedding):
+                load_shedding = 0.0
 
             # Garantir que as ações estejam dentro dos limites
             bess_power = np.clip(bess_power, -env.BESSPmax, env.BESSPmax)
@@ -127,3 +154,6 @@ if __name__ == "__main__":
     print("Treinamento concluído.")
     # Salvar o modelo treinado
     torch.save(model.state_dict(), 'trained_model.pth')
+
+    # Remover o arquivo temporário de configuração
+    os.remove(temp_config_path)

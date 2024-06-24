@@ -29,6 +29,7 @@ class NetZeroMicrogridEnv(gym.Env):
         self.off_grid_duration_hours = config['off_grid_duration_hours']
         self.off_grid_duration_steps = int(self.off_grid_duration_hours * 60 / self.time_step_minutes)
         self.BESSPmax = config['BESSPmax']
+        self.BESSEmax = config['BESSEmax']  # Adicionado para considerar a energia máxima do BESS
         
         self.current_step = 0
         self.off_grid_counter = 0
@@ -53,7 +54,7 @@ class NetZeroMicrogridEnv(gym.Env):
     def reset(self):
         self.current_step = 0
         self.off_grid_counter = 0
-        self.state = np.array([self.initial_soc, 0, 0, 0, 0, 0, 0, 0, self.initial_soc, 0])
+        self.state = np.array([self.initial_soc * self.BESSEmax, 0, 0, 0, 0, 0, 0, 0, self.initial_soc, 0])
         return self.state
     
     def _apply_noise(self, power):
@@ -92,13 +93,13 @@ class NetZeroMicrogridEnv(gym.Env):
             bess_power = np.sign(bess_power) * self.BESSPmax
         
         # Calculando a potência máxima de carregamento baseada no SoC
-        max_charge_power = self._max_charge_power(self.state[0])
+        max_charge_power = self._max_charge_power(self.state[0] / self.BESSEmax)
         bess_power = min(bess_power, max_charge_power)
         
         # Atualizando o SOC da bateria
         soc_change = bess_power * (self.time_step_minutes / 60)  # Convertendo time_step de minutos para horas
         new_soc = self.state[0] + soc_change
-        
+
         # Calculando o balanço de energia
         net_energy = self.eta_ac_dc * (bess_power if bess_power > 0 else 0) + pv_power * (1 - pv_shedding) - \
                      self.eta_dc_ac * (bess_power if bess_power < 0 else 0) - load_power * (1 - load_shedding)
@@ -124,7 +125,14 @@ class NetZeroMicrogridEnv(gym.Env):
                 grid_cost = -grid_power * self.grid_cost_export
             load_shedding_cost = load_shedding * self.load_shedding_penalty
         
-        reward = - (grid_cost + load_shedding_cost + power_violation_penalty)
+        # Aplicando penalidades por violação do SoC
+        soc_violation_penalty = 0
+        if new_soc < self.soc_min * self.BESSEmax:
+            soc_violation_penalty = self.soc_violation_penalty * (self.soc_min * self.BESSEmax - new_soc)
+        elif new_soc > self.soc_max * self.BESSEmax:
+            soc_violation_penalty = self.soc_violation_penalty * (new_soc - self.soc_max * self.BESSEmax)
+        
+        reward = - (grid_cost + load_shedding_cost + power_violation_penalty + soc_violation_penalty)
         
         # Atualizando o estado
         self.state = np.array([
@@ -136,16 +144,16 @@ class NetZeroMicrogridEnv(gym.Env):
             load_power,                      # Posição 5: Potência da Carga (instantâneo)
             load_power * load_shedding,      # Posição 6: Load shedding
             grid_cost + load_shedding_cost,  # Posição 7: Custo com base no time_step
-            new_soc,                         # Posição 8: SoC do BESS
+            new_soc / self.BESSEmax,         # Posição 8: SoC do BESS (normalizado)
             1 if off_grid else 0             # Posição 9: Estado da Rede (1 se off-grid, 0 se on-grid)
         ])
         
         # Verificação de término do episódio
-        done = (new_soc < self.soc_min or new_soc > self.soc_max)
+        done = (new_soc < self.soc_min * self.BESSEmax or new_soc > self.soc_max * self.BESSEmax)
         done_reason = ""
-        if new_soc < self.soc_min:
+        if new_soc < self.soc_min * self.BESSEmax:
             done_reason = "SOC below minimum threshold"
-        elif new_soc > self.soc_max:
+        elif new_soc > self.soc_max * self.BESSEmax:
             done_reason = "SOC above maximum threshold"
         
         # Informação adicional
