@@ -226,13 +226,15 @@ for episode in range(num_episodes):
 
     print(f"Episode {episode + 1}: Total Reward: {episode_reward:.3f}")
 
-plt.figure(figsize=(12, 6))
+plt.figure(figsize=(12, 6), dpi=200)
 plt.plot(range(1, num_episodes + 1), episode_rewards, label='Episode Reward', color='orange')
 plt.xlabel('Episode')
 plt.ylabel('Total Reward')
-plt.title('Total Reward per Episode')
+plt.title('Total Reward per Episode during the Training Process')
 plt.legend()
+plt.savefig('Reward_Training.pdf', bbox_inches='tight', pad_inches=0.02)
 plt.show()
+
 
 # Save the model
 save_model(policy_net, 'battery_policy_net.pth')

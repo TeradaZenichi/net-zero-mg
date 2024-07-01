@@ -96,6 +96,7 @@ plt.xticks(time_steps)
 plt.legend(loc='best', ncol=7)
 plt.xticks(time_steps[::20])  # Adjust the tick frequency here
 plt.grid(False)
+plt.savefig('Energy_Management.pdf', bbox_inches='tight', pad_inches=0.02)
 plt.show()
 
 plt.figure(figsize=(12, 6), dpi=200)
@@ -106,4 +107,5 @@ plt.title('BESS energy over time')
 plt.xticks(time_steps)
 plt.xticks(time_steps[::20])  # Adjust the tick frequency here
 plt.grid(False)
+plt.savefig('BESS_Energy.pdf', bbox_inches='tight', pad_inches=0.02)
 plt.show()
